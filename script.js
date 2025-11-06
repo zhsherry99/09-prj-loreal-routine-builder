@@ -297,26 +297,45 @@ if (generateBtn) {
     chatWindow.innerHTML = "Generating routine… Please wait.";
 
     try {
-      // the page may expose OPENAI_API_KEY via a secrets.js that sets window.OPENAI_API_KEY
-      const apiKey = window.OPENAI_API_KEY || window.OPENAIKEY || null;
-      if (!apiKey) {
-        chatWindow.innerHTML = `<div class="placeholder-message">No OpenAI API key found. Add a <code>secrets.js</code> that sets <code>window.OPENAI_API_KEY</code>.</div>`;
-        return;
-      }
+      // Prefer calling a Cloudflare Worker (or other proxy) that holds the OpenAI API key
+      // Provide the worker URL via window.CF_WORKER_URL or window.CLOUDFLARE_WORKER_URL
+      const proxyUrl =
+        window.CF_WORKER_URL ||
+        window.CLOUDFLARE_WORKER_URL ||
+        "https://lorealroutinebuilder.sherreo99.workers.dev";
 
-      const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4o",
-          messages: [systemMsg, userMsg],
-          max_tokens: 700,
-          temperature: 0.7,
-        }),
-      });
+      let resp;
+      if (proxyUrl) {
+        // The worker expects a JSON body with { messages: [...] } (see cloudfare.js template)
+        resp = await fetch(proxyUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ messages: [systemMsg, userMsg] }),
+        });
+      } else {
+        // Fallback: call OpenAI directly from the browser (requires window.OPENAI_API_KEY)
+        const apiKey = window.OPENAI_API_KEY || window.OPENAIKEY || null;
+        if (!apiKey) {
+          chatWindow.innerHTML = `<div class="placeholder-message">No OpenAI API key found. Add a <code>secrets.js</code> that sets <code>window.OPENAI_API_KEY</code>, or deploy a Cloudflare Worker and set <code>window.CF_WORKER_URL</code> to its URL.</div>`;
+          return;
+        }
+
+        resp = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: "gpt-4o",
+            messages: [systemMsg, userMsg],
+            max_tokens: 700,
+            temperature: 0.7,
+          }),
+        });
+      }
 
       if (!resp.ok) {
         const errText = await resp.text();
