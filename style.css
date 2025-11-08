@@ -413,6 +413,20 @@ body {
   transform: scale(1);
 }
 
+/* brief highlight when a selected product is focused from the chips list */
+.product-card.highlight {
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.12);
+  transform: translateY(-3px);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+/* search hit styling inside product titles */
+.search-hit {
+  background: #fff176; /* soft yellow */
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
 /* description overlay removed */
 
 /* selected product chips */

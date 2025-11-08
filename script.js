@@ -1,5 +1,6 @@
 /* Get references to DOM elements */
 const categoryFilter = document.getElementById("categoryFilter");
+const productSearch = document.getElementById("productSearch");
 const productsContainer = document.getElementById("productsContainer");
 const chatForm = document.getElementById("chatForm");
 const chatWindow = document.getElementById("chatWindow");
@@ -112,14 +113,19 @@ function appendCitationsToChat(results) {
   if (!chatWindow || !results || results.length === 0) return;
   const cont = document.createElement("div");
   cont.className = "chat-citations";
-  cont.innerHTML = `<div class="citations-title">Sources:</div>` +
+  cont.innerHTML =
+    `<div class="citations-title">Sources:</div>` +
     results
       .slice(0, 5)
       .map(
         (r) =>
-          `<div class="citation-item"><a href="${r.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+          `<div class="citation-item"><a href="${
+            r.url
+          }" target="_blank" rel="noopener noreferrer">${escapeHtml(
             r.title || r.url
-          )}</a><div class="citation-snippet">${escapeHtml(r.snippet || "").slice(0,200)}</div></div>`
+          )}</a><div class="citation-snippet">${escapeHtml(
+            r.snippet || ""
+          ).slice(0, 200)}</div></div>`
       )
       .join("");
   chatWindow.appendChild(cont);
@@ -150,21 +156,46 @@ function displayProducts(products) {
   productsById = {};
   products.forEach((p) => (productsById[p.id] = p));
 
+  // helper: highlight occurrences of the search term inside a text (case-insensitive)
+  function highlightMatch(text, term) {
+    if (!term) return escapeHtml(text);
+    const lower = text.toLowerCase();
+    const t = term.toLowerCase();
+    let idx = 0;
+    let out = "";
+    let pos = 0;
+    while ((idx = lower.indexOf(t, pos)) !== -1) {
+      out += escapeHtml(text.slice(pos, idx));
+      out += `<mark class="search-hit">${escapeHtml(
+        text.slice(idx, idx + t.length)
+      )}</mark>`;
+      pos = idx + t.length;
+    }
+    out += escapeHtml(text.slice(pos));
+    return out;
+  }
+
+  const currentSearch =
+    productSearch && productSearch.value ? productSearch.value.trim() : "";
+
   productsContainer.innerHTML = products
     .map((product) => {
       const isSelected = selectedProducts.some((p) => p.id === product.id);
+      const titleHtml = highlightMatch(product.name || "", currentSearch);
       return `
     <div class="product-card ${isSelected ? "selected" : ""}" data-id="${
         product.id
       }" role="button" tabindex="0" aria-pressed="${isSelected}">
       <span class="checkmark" aria-hidden="true">✔</span>
-      <img src="${product.image}" alt="${product.name}">
+      <img src="${product.image}" alt="${escapeHtml(product.name)}">
       <div class="product-info">
-        <h3>${product.name}</h3>
-        <p>${product.brand}</p>
+        <h3>${titleHtml}</h3>
+        <p>${escapeHtml(product.brand || "")}</p>
         <button class="learnmore-btn" data-id="${
           product.id
-        }" aria-label="Learn more about ${product.name}">Learn more</button>
+        }" aria-label="Learn more about ${escapeHtml(
+        product.name
+      )}">Learn more</button>
       </div>
     </div>
   `;
@@ -398,26 +429,81 @@ function updateSelectedList() {
       updateSelectedList();
       saveSelectedToStorage();
     });
+
+    // Clicking on the chip (not the remove button) should show all products
+    // regardless of the current category filter, then scroll to the product.
+    chip.addEventListener("click", (e) => {
+      // ignore clicks on the remove button
+      if (e.target.closest(".remove-chip")) return;
+
+      // clear category filter so all products are visible
+      if (categoryFilter) {
+        try {
+          categoryFilter.value = "";
+        } catch (err) {}
+      }
+      // update grid to show all products (search term preserved)
+      updateProductGrid();
+
+      // after rendering, scroll to the product card and briefly highlight it
+      const id = Number(chip.dataset.id);
+      setTimeout(() => {
+        const card = productsContainer.querySelector(
+          `.product-card[data-id="${id}"]`
+        );
+        if (card) {
+          card.scrollIntoView({ behavior: "smooth", block: "center" });
+          card.classList.add("highlight");
+          setTimeout(() => card.classList.remove("highlight"), 1200);
+        }
+      }, 120);
+    });
   });
   // persist whenever the visible selected list changes
   saveSelectedToStorage();
 }
 
-/* Filter and display products when category changes */
-categoryFilter.addEventListener("change", async (e) => {
-  // attempt to use cached allProducts if available, otherwise load
+/* Update product grid based on selected category and search term */
+async function updateProductGrid() {
   const products =
     allProducts && allProducts.length > 0 ? allProducts : await loadProducts();
-  const selectedCategory = e.target.value;
+  const selectedCategory = categoryFilter ? categoryFilter.value : "";
+  const searchTerm =
+    productSearch && productSearch.value
+      ? productSearch.value.trim().toLowerCase()
+      : "";
 
-  /* filter() creates a new array containing only products 
-     where the category matches what the user selected */
-  const filteredProducts = products.filter(
-    (product) => product.category === selectedCategory
-  );
+  let filtered = products;
+  if (selectedCategory) {
+    filtered = filtered.filter(
+      (product) => product.category === selectedCategory
+    );
+  }
 
-  displayProducts(filteredProducts);
-});
+  if (searchTerm) {
+    filtered = filtered.filter((product) => {
+      const hay = `${product.name} ${product.brand || ""} ${
+        product.description || ""
+      }`.toLowerCase();
+      return hay.includes(searchTerm);
+    });
+  }
+
+  if (!filtered || filtered.length === 0) {
+    productsContainer.innerHTML = `<div class="placeholder-message">No products match your filters.</div>`;
+    return;
+  }
+
+  displayProducts(filtered);
+}
+
+if (categoryFilter) {
+  categoryFilter.addEventListener("change", updateProductGrid);
+}
+
+if (productSearch) {
+  productSearch.addEventListener("input", updateProductGrid);
+}
 
 /* Chat form submission handler - send follow-up questions about the generated routine */
 chatForm.addEventListener("submit", async (e) => {
@@ -448,21 +534,26 @@ chatForm.addEventListener("submit", async (e) => {
     // include formatted results as a system-context message so the model can cite them
     const formatted = webResults
       .slice(0, 6)
-      .map((r, i) => `${i + 1}. ${r.title || r.url}\n${r.snippet || ""}\n${r.url}`)
+      .map(
+        (r, i) => `${i + 1}. ${r.title || r.url}\n${r.snippet || ""}\n${r.url}`
+      )
       .join("\n\n");
-    conversationMessages.push({ role: "system", content: `Web search results (top):\n\n${formatted}` });
+    conversationMessages.push({
+      role: "system",
+      content: `Web search results (top):\n\n${formatted}`,
+    });
   }
 
   // disable send button while waiting
   if (sendBtn) sendBtn.disabled = true;
 
   try {
-  const reply = await callOpenAIWithMessages(conversationMessages);
+    const reply = await callOpenAIWithMessages(conversationMessages);
     // record assistant reply in history and UI
     conversationMessages.push({ role: "assistant", content: reply });
     appendMessageToChat("assistant", reply);
-  // show citations if available
-  if (webResults && webResults.length > 0) appendCitationsToChat(webResults);
+    // show citations if available
+    if (webResults && webResults.length > 0) appendCitationsToChat(webResults);
   } catch (err) {
     appendMessageToChat("assistant", `Error: ${err.message}`);
   } finally {
@@ -497,6 +588,8 @@ if (existingClearBtn) {
     }
     // reflect any selections in the UI (if a category is already selected the cards will show selected when displayed)
     updateSelectedList();
+    // ensure the product grid reflects current filters/search on load
+    updateProductGrid();
   } catch (e) {
     // ignore
   }
@@ -548,9 +641,15 @@ if (generateBtn) {
       if (webResults && webResults.length > 0) {
         const formatted = webResults
           .slice(0, 6)
-          .map((r, i) => `${i + 1}. ${r.title || r.url}\n${r.snippet || ""}\n${r.url}`)
+          .map(
+            (r, i) =>
+              `${i + 1}. ${r.title || r.url}\n${r.snippet || ""}\n${r.url}`
+          )
           .join("\n\n");
-        conversationMessages.push({ role: "system", content: `Web search results (top):\n\n${formatted}` });
+        conversationMessages.push({
+          role: "system",
+          content: `Web search results (top):\n\n${formatted}`,
+        });
       }
 
       const content = await callOpenAIWithMessages(conversationMessages);
@@ -561,7 +660,8 @@ if (generateBtn) {
 
       // display assistant reply
       appendMessageToChat("assistant", content);
-      if (webResults && webResults.length > 0) appendCitationsToChat(webResults);
+      if (webResults && webResults.length > 0)
+        appendCitationsToChat(webResults);
     } catch (err) {
       appendMessageToChat(
         "assistant",
