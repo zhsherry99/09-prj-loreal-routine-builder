@@ -81,6 +81,51 @@ body {
   margin-bottom: 20px;
 }
 
+/* Chat bubble styles */
+.chat-window {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-msg {
+  max-width: 78%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  word-break: break-word;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06);
+  display: inline-block;
+}
+
+.assistant-msg {
+  align-self: flex-start;
+  background: #f1f3f5;
+  color: #111;
+  border-bottom-left-radius: 6px;
+}
+
+.user-msg {
+  align-self: flex-end;
+  background: #111;
+  color: #fff;
+  border-bottom-right-radius: 6px;
+}
+
+.msg-role {
+  font-size: 12px;
+  opacity: 0.75;
+  margin-bottom: 6px;
+}
+
+.msg-body {
+  white-space: pre-wrap; /* preserve newlines from AI */
+}
+
+/* Make sure chat window always scrolls to bottom when new messages are appended */
+.chat-window:focus {
+  outline: none;
+}
+
 /* placeholder message */
 .placeholder-message {
   width: 100%;
@@ -229,6 +274,18 @@ body {
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
+}
+
+.clear-btn {
+  margin-top: 1px;
+  background: #fff;
+  border: 1px solid #000;
+  color: #000;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  margin-right: 0px;
 }
 
 /* modal styles */
@@ -388,6 +445,23 @@ body {
 .selected-products h2 {
   font-size: 20px;
   margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* On small screens stack the header and move the clear button below */
+@media (max-width: 520px) {
+  .selected-products h2 {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .clear-btn {
+    width: auto;
+    margin-top: 6px;
+  }
 }
 
 #selectedProductsList {

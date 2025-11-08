@@ -4,6 +4,127 @@ const productsContainer = document.getElementById("productsContainer");
 const chatForm = document.getElementById("chatForm");
 const chatWindow = document.getElementById("chatWindow");
 const generateBtn = document.getElementById("generateRoutine");
+// const clearAllSelections = document.getElementById("clearAllSelections");
+
+/* Conversation state for chat follow-ups */
+let conversationMessages = [];
+let routineGenerated = false; // set to true once the initial routine is produced
+
+const systemInstruction = {
+  role: "system",
+  content:
+    "You are a helpful skincare, haircare, makeup, and fragrance assistant. Only answer questions related to the provided routine or to topics like skincare, haircare, makeup, fragrance, and related product advice. Use up-to-date, real-world information when available and include links and short citations for any factual claims about current products, releases, or formulations. If the user asks about unrelated topics, politely decline and steer them back to the subject.",
+};
+
+function appendMessageToChat(role, content) {
+  if (!chatWindow) return;
+  const wrapper = document.createElement("div");
+  wrapper.className =
+    role === "user" ? "chat-msg user-msg" : "chat-msg assistant-msg";
+  wrapper.innerHTML = `<div class="msg-role">${
+    role === "user" ? "You" : "Advisor"
+  }</div><div class="msg-body">${escapeHtml(content).replace(
+    /\n/g,
+    "<br>"
+  )}</div>`;
+  chatWindow.appendChild(wrapper);
+  // keep the latest message visible
+  chatWindow.scrollTop = chatWindow.scrollHeight;
+}
+
+async function callOpenAIWithMessages(messages) {
+  // prefer proxy worker
+  const proxyUrl =
+    window.CF_WORKER_URL ||
+    window.CLOUDFLARE_WORKER_URL ||
+    "https://lorealroutinebuilder.sherreo99.workers.dev";
+
+  let resp;
+  if (proxyUrl) {
+    resp = await fetch(proxyUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages }),
+    });
+  } else {
+    const apiKey = window.OPENAI_API_KEY || window.OPENAIKEY || null;
+    if (!apiKey)
+      throw new Error(
+        "No OpenAI API key found. Provide a worker URL or window.OPENAI_API_KEY."
+      );
+
+    resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages,
+        max_tokens: 700,
+        temperature: 0.7,
+      }),
+    });
+  }
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`OpenAI API error: ${resp.status} - ${txt}`);
+  }
+
+  const data = await resp.json();
+  const content =
+    data && data.choices && data.choices[0] && data.choices[0].message
+      ? data.choices[0].message.content
+      : JSON.stringify(data, null, 2);
+  return content;
+}
+
+/*
+  performWebSearch(query)
+  - Attempts to call a web-search proxy to retrieve current results.
+  - The client must set window.SEARCH_PROXY_URL to a server-side endpoint that performs the web search (to avoid exposing search API keys).
+  - The proxy should accept { q } and return { results: [{ title, snippet, url }] } or a raw array.
+*/
+async function performWebSearch(query) {
+  try {
+    const proxy = window.SEARCH_PROXY_URL || window.SEARCH_WORKER_URL || null;
+    if (!proxy) return [];
+
+    const r = await fetch(proxy, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q: query }),
+    });
+    if (!r.ok) return [];
+    const j = await r.json();
+    // support multiple shapes
+    if (Array.isArray(j)) return j;
+    if (Array.isArray(j.results)) return j.results;
+    return [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function appendCitationsToChat(results) {
+  if (!chatWindow || !results || results.length === 0) return;
+  const cont = document.createElement("div");
+  cont.className = "chat-citations";
+  cont.innerHTML = `<div class="citations-title">Sources:</div>` +
+    results
+      .slice(0, 5)
+      .map(
+        (r) =>
+          `<div class="citation-item"><a href="${r.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+            r.title || r.url
+          )}</a><div class="citation-snippet">${escapeHtml(r.snippet || "").slice(0,200)}</div></div>`
+      )
+      .join("");
+  chatWindow.appendChild(cont);
+  chatWindow.scrollTop = chatWindow.scrollHeight;
+}
 
 /* Show initial placeholder until user selects a category */
 productsContainer.innerHTML = `
@@ -22,6 +143,7 @@ async function loadProducts() {
 /* Create HTML for displaying product cards */
 let selectedProducts = [];
 let productsById = {};
+let allProducts = [];
 
 function displayProducts(products) {
   // build a quick id -> product map so listeners can access product info later
@@ -82,6 +204,49 @@ function attachCardListeners() {
 
     card.dataset.listenerAttached = "true";
   });
+}
+
+/* Persist selected product ids to localStorage */
+function saveSelectedToStorage() {
+  try {
+    const ids = selectedProducts.map((p) => p.id);
+    localStorage.setItem("selectedProductIds", JSON.stringify(ids));
+  } catch (e) {
+    // ignore
+  }
+}
+
+/* Load selected product ids from localStorage and populate selectedProducts */
+function loadSelectedFromStorage() {
+  try {
+    const raw = localStorage.getItem("selectedProductIds");
+    if (!raw) return;
+    const ids = JSON.parse(raw);
+    if (!Array.isArray(ids)) return;
+    // map ids to actual product objects if we have them
+    if (allProducts && allProducts.length > 0) {
+      selectedProducts = allProducts.filter((p) => ids.includes(p.id));
+    } else {
+      // store ids as placeholders (will be resolved after products load)
+      selectedProducts = ids.map((id) => ({ id }));
+    }
+  } catch (e) {
+    // ignore parse errors
+  }
+}
+
+/* Clear all selections */
+function clearAllSelections() {
+  selectedProducts = [];
+  saveSelectedToStorage();
+
+  // remove selected classes from any rendered cards
+  productsContainer.querySelectorAll(".product-card.selected").forEach((c) => {
+    c.classList.remove("selected");
+    c.setAttribute("aria-pressed", "false");
+  });
+
+  updateSelectedList();
 }
 
 /* Modal: show product description in a dialog */
@@ -231,13 +396,18 @@ function updateSelectedList() {
       }
 
       updateSelectedList();
+      saveSelectedToStorage();
     });
   });
+  // persist whenever the visible selected list changes
+  saveSelectedToStorage();
 }
 
 /* Filter and display products when category changes */
 categoryFilter.addEventListener("change", async (e) => {
-  const products = await loadProducts();
+  // attempt to use cached allProducts if available, otherwise load
+  const products =
+    allProducts && allProducts.length > 0 ? allProducts : await loadProducts();
   const selectedCategory = e.target.value;
 
   /* filter() creates a new array containing only products 
@@ -249,39 +419,107 @@ categoryFilter.addEventListener("change", async (e) => {
   displayProducts(filteredProducts);
 });
 
-/* Chat form submission handler - placeholder for OpenAI integration */
-chatForm.addEventListener("submit", (e) => {
+/* Chat form submission handler - send follow-up questions about the generated routine */
+chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
+  const input = document.getElementById("userInput");
+  const sendBtn = document.getElementById("sendBtn");
+  if (!input) return;
+  const text = input.value && input.value.trim();
+  if (!text) return;
 
-  chatWindow.innerHTML = "Connect to the OpenAI API for a response!";
+  // require generating a routine first to ask follow-ups about it
+  if (!routineGenerated) {
+    appendMessageToChat(
+      "assistant",
+      "Please generate a routine first, then ask follow-up questions about it."
+    );
+    return;
+  }
+
+  // append user's question to chat and conversation history
+  appendMessageToChat("user", text);
+  conversationMessages.push({ role: "user", content: text });
+
+  // attempt a web search for the user's question to provide up-to-date context
+  // only if a search proxy is configured
+  const webResults = await performWebSearch(text + " L'Oréal");
+  if (webResults && webResults.length > 0) {
+    // include formatted results as a system-context message so the model can cite them
+    const formatted = webResults
+      .slice(0, 6)
+      .map((r, i) => `${i + 1}. ${r.title || r.url}\n${r.snippet || ""}\n${r.url}`)
+      .join("\n\n");
+    conversationMessages.push({ role: "system", content: `Web search results (top):\n\n${formatted}` });
+  }
+
+  // disable send button while waiting
+  if (sendBtn) sendBtn.disabled = true;
+
+  try {
+  const reply = await callOpenAIWithMessages(conversationMessages);
+    // record assistant reply in history and UI
+    conversationMessages.push({ role: "assistant", content: reply });
+    appendMessageToChat("assistant", reply);
+  // show citations if available
+  if (webResults && webResults.length > 0) appendCitationsToChat(webResults);
+  } catch (err) {
+    appendMessageToChat("assistant", `Error: ${err.message}`);
+  } finally {
+    if (sendBtn) sendBtn.disabled = false;
+    input.value = "";
+  }
 });
 
 // initialize selected products list UI
 updateSelectedList();
+
+// Bind the existing Clear Selection button in the HTML (if present)
+const existingClearBtn = document.getElementById("buttonClearSelection");
+if (existingClearBtn) {
+  existingClearBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    clearAllSelections();
+  });
+}
+
+// on load, fetch all products once and restore selections from storage
+(async function init() {
+  try {
+    allProducts = await loadProducts();
+    // resolve any placeholder selected ids to full objects
+    const raw = localStorage.getItem("selectedProductIds");
+    if (raw) {
+      const ids = JSON.parse(raw);
+      if (Array.isArray(ids) && ids.length > 0) {
+        selectedProducts = allProducts.filter((p) => ids.includes(p.id));
+      }
+    }
+    // reflect any selections in the UI (if a category is already selected the cards will show selected when displayed)
+    updateSelectedList();
+  } catch (e) {
+    // ignore
+  }
+})();
 
 /* Generate routine using OpenAI when the user clicks the button */
 if (generateBtn) {
   generateBtn.addEventListener("click", async () => {
     // collect only selected products
     if (!selectedProducts || selectedProducts.length === 0) {
-      chatWindow.innerHTML = `<div class="placeholder-message">Please select one or more products first.</div>`;
+      appendMessageToChat(
+        "assistant",
+        "Please select one or more products first."
+      );
       return;
     }
 
-    // prepare JSON with required fields
     const productsPayload = selectedProducts.map((p) => ({
       name: p.name,
       brand: p.brand,
       category: p.category,
       description: p.description,
     }));
-
-    // prepare messages per project guideline (use messages, async/await)
-    const systemMsg = {
-      role: "system",
-      content:
-        "You are a helpful skincare and haircare routine assistant. Given a set of products, produce a clear, ordered daily routine that indicates when to use each product (AM / PM / as needed), short reasons, and any cautions.",
-    };
 
     const userMsg = {
       role: "user",
@@ -290,71 +528,45 @@ if (generateBtn) {
         JSON.stringify(productsPayload, null, 2),
     };
 
-    // show loading state
+    // prepare conversation: start with the system instruction
+    conversationMessages = [systemInstruction];
+    conversationMessages.push(userMsg);
+
+    // UI loading state
     const prevHtml = generateBtn.innerHTML;
     generateBtn.disabled = true;
     generateBtn.innerHTML = "Generating…";
-    chatWindow.innerHTML = "Generating routine… Please wait.";
+    appendMessageToChat("assistant", "Generating routine… Please wait.");
 
     try {
-      // Prefer calling a Cloudflare Worker (or other proxy) that holds the OpenAI API key
-      // Provide the worker URL via window.CF_WORKER_URL or window.CLOUDFLARE_WORKER_URL
-      const proxyUrl =
-        window.CF_WORKER_URL ||
-        window.CLOUDFLARE_WORKER_URL ||
-        "https://lorealroutinebuilder.sherreo99.workers.dev";
+      // run a web search for the selected products to provide current context
+      const productNames = productsPayload.map((p) => p.name).join(", ");
+      const webResults = await performWebSearch(
+        `L'Oréal ${productNames} routine, product information, releases, or reviews`
+      );
 
-      let resp;
-      if (proxyUrl) {
-        // The worker expects a JSON body with { messages: [...] } (see cloudfare.js template)
-        resp = await fetch(proxyUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ messages: [systemMsg, userMsg] }),
-        });
-      } else {
-        // Fallback: call OpenAI directly from the browser (requires window.OPENAI_API_KEY)
-        const apiKey = window.OPENAI_API_KEY || window.OPENAIKEY || null;
-        if (!apiKey) {
-          chatWindow.innerHTML = `<div class="placeholder-message">No OpenAI API key found. Add a <code>secrets.js</code> that sets <code>window.OPENAI_API_KEY</code>, or deploy a Cloudflare Worker and set <code>window.CF_WORKER_URL</code> to its URL.</div>`;
-          return;
-        }
-
-        resp = await fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: "gpt-4o",
-            messages: [systemMsg, userMsg],
-            max_tokens: 700,
-            temperature: 0.7,
-          }),
-        });
+      if (webResults && webResults.length > 0) {
+        const formatted = webResults
+          .slice(0, 6)
+          .map((r, i) => `${i + 1}. ${r.title || r.url}\n${r.snippet || ""}\n${r.url}`)
+          .join("\n\n");
+        conversationMessages.push({ role: "system", content: `Web search results (top):\n\n${formatted}` });
       }
 
-      if (!resp.ok) {
-        const errText = await resp.text();
-        chatWindow.innerHTML = `<div class="placeholder-message">OpenAI API error: ${resp.status} - ${errText}</div>`;
-        return;
-      }
+      const content = await callOpenAIWithMessages(conversationMessages);
 
-      const data = await resp.json();
-      const content =
-        data && data.choices && data.choices[0] && data.choices[0].message
-          ? data.choices[0].message.content
-          : JSON.stringify(data, null, 2);
+      // record assistant reply
+      conversationMessages.push({ role: "assistant", content });
+      routineGenerated = true;
 
-      // display AI-generated routine in chat window (preserve newlines)
-      chatWindow.innerHTML = `<div class="ai-response">${escapeHtml(
-        content
-      ).replace(/\n/g, "<br>")}</div>`;
+      // display assistant reply
+      appendMessageToChat("assistant", content);
+      if (webResults && webResults.length > 0) appendCitationsToChat(webResults);
     } catch (err) {
-      chatWindow.innerHTML = `<div class="placeholder-message">Error generating routine: ${err.message}</div>`;
+      appendMessageToChat(
+        "assistant",
+        `Error generating routine: ${err.message}`
+      );
     } finally {
       generateBtn.disabled = false;
       generateBtn.innerHTML = prevHtml;
