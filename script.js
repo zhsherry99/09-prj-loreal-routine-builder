@@ -7,6 +7,67 @@ const chatWindow = document.getElementById("chatWindow");
 const generateBtn = document.getElementById("generateRoutine");
 // const clearAllSelections = document.getElementById("clearAllSelections");
 
+// RTL detection: languages that should render RTL
+const RTL_LANGS = ["ar", "he", "fa", "ur", "ps", "sd", "ug", "yi", "dv"];
+
+function detectAndApplyRTL() {
+  try {
+    const docLang = (
+      document.documentElement.lang ||
+      navigator.language ||
+      ""
+    ).toLowerCase();
+    const lang = docLang.split("-")[0];
+    if (RTL_LANGS.includes(lang)) {
+      document.documentElement.setAttribute("dir", "rtl");
+      document.documentElement.classList.add("rtl");
+    } else {
+      document.documentElement.setAttribute("dir", "ltr");
+      document.documentElement.classList.remove("rtl");
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+// Observe changes to the document language attribute so we can react when
+// Google Translate (or other tools) update the page language dynamically.
+function observeLangAttributeChanges() {
+  try {
+    const target = document.documentElement;
+    const mo = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === "attributes" && m.attributeName === "lang") {
+          // re-run detection when lang changes
+          detectAndApplyRTL();
+        }
+      }
+    });
+    mo.observe(target, { attributes: true, attributeFilter: ["lang"] });
+    // also attempt to detect when Google Translate injects its banner iframe
+    // by watching for additions to the body; if an iframe with goog-appears,
+    // re-run detection after a short delay.
+    const bodyObserver = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.addedNodes && m.addedNodes.length) {
+          for (const node of m.addedNodes) {
+            if (node.nodeType === 1 && node.tagName === "IFRAME") {
+              // delay a bit for Translate to update attributes
+              setTimeout(() => detectAndApplyRTL(), 300);
+            }
+          }
+        }
+      }
+    });
+    bodyObserver.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+  } catch (e) {
+    // ignore
+  }
+}
+
 /* Conversation state for chat follow-ups */
 let conversationMessages = [];
 let routineGenerated = false; // set to true once the initial routine is produced
@@ -481,11 +542,11 @@ async function updateProductGrid() {
   }
 
   if (searchTerm) {
+    // When searching, only match the term against the product title
+    // (we still allow category filtering to apply unless chips clear it)
     filtered = filtered.filter((product) => {
-      const hay = `${product.name} ${product.brand || ""} ${
-        product.description || ""
-      }`.toLowerCase();
-      return hay.includes(searchTerm);
+      const title = (product.name || "").toLowerCase();
+      return title.includes(searchTerm);
     });
   }
 
@@ -588,6 +649,10 @@ if (existingClearBtn) {
     }
     // reflect any selections in the UI (if a category is already selected the cards will show selected when displayed)
     updateSelectedList();
+    // detect language direction and apply RTL if needed
+    detectAndApplyRTL();
+    // observe dynamic language changes (e.g. Google Translate) and re-apply RTL when lang mutates
+    observeLangAttributeChanges();
     // ensure the product grid reflects current filters/search on load
     updateProductGrid();
   } catch (e) {

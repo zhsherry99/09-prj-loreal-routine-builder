@@ -43,14 +43,24 @@ body {
 }
 
 .search-section select {
-  width: 100%;
+  flex: 1;
   padding: 16px;
   font-size: 18px;
-  border: 2px solid #000;
+  border: 1px solid #000;
   border-radius: 8px;
   cursor: pointer;
   background-color: white;
   font-weight: 500;
+}
+
+.product-search {
+  flex: 2; /* make the search input wider than the select */
+  padding: 16px;
+  font-size: 18px;
+  border: 1px solid #000;
+  border-radius: 8px;
+  margin-right: 12px;
+  background-color: white;
 }
 
 .search-section select:focus {
@@ -266,9 +276,10 @@ body {
 
 .learnmore-btn {
   margin-top: 8px;
-  align-self: start;
-  background: transparent;
-  border: 1px solid #000;
+  /* push the button to the inline end (logical right in LTR, left in RTL) */
+  margin-inline-start: auto;
+  background: #e3a535;
+  border: 0px;
   color: #000;
   padding: 6px 10px;
   border-radius: 6px;
@@ -299,7 +310,7 @@ body {
   z-index: 1000;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 220ms ease, visibility 220ms ease;
+  transition: opacity 60ms ease, visibility 60ms ease;
 }
 
 .modal-overlay.open {
@@ -417,14 +428,14 @@ body {
 .product-card.highlight {
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.12);
   transform: translateY(-3px);
-  transition: transform 160ms ease, box-shadow 160ms ease;
+  transition: transform 120ms ease, box-shadow 120ms ease;
 }
 
 /* search hit styling inside product titles */
 .search-hit {
-  background: #fff176; /* soft yellow */
-  padding: 0 3px;
-  border-radius: 3px;
+  background: #afafaf; /* soft yellow */
+  padding: 0 2px;
+  border-radius: 6px;
 }
 
 /* description overlay removed */
@@ -452,7 +463,7 @@ body {
 .selected-products {
   margin: 40px 0;
   padding: 20px;
-  border: 2px solid #000;
+  border: 1px solid #000;
   border-radius: 8px;
 }
 
@@ -491,7 +502,7 @@ body {
   font-size: 18px;
   font-weight: 500;
   color: #fff;
-  background: #000;
+  background: #ff003b;
   border: none;
   border-radius: 8px;
   cursor: pointer;
@@ -505,3 +516,139 @@ body {
 .generate-btn i {
   margin-right: 8px;
 }
+
+/* RTL support: when the document or container is RTL, flip layouts and alignment
+   Use either <html dir="rtl"> or add a `.rtl` class on a top-level container. */
+[dir="rtl"] .page-wrapper,
+.rtl .page-wrapper {
+  direction: rtl;
+}
+
+/* Search section: reverse order of inputs in RTL */
+[dir="rtl"] .search-section,
+.rtl .search-section {
+  flex-direction: row-reverse;
+}
+
+[dir="rtl"] .product-search,
+.rtl .product-search {
+  margin-right: 0;
+  margin-left: 12px; /* mirror spacing */
+}
+
+/* Product cards: reverse image/content order and align text to right */
+[dir="rtl"] .product-card,
+.rtl .product-card {
+  flex-direction: row-reverse;
+}
+
+[dir="rtl"] .product-card .product-info,
+.rtl .product-card .product-info {
+  text-align: right;
+  align-items: flex-end;
+}
+
+/* Move checkmark to left in RTL */
+[dir="rtl"] .product-card .checkmark,
+.rtl .product-card .checkmark {
+  right: auto;
+  left: 8px;
+}
+
+/* Selected products header: reverse order so clear button appears on the left */
+[dir="rtl"] .selected-products h2,
+.rtl .selected-products h2 {
+  flex-direction: row-reverse;
+}
+
+/* Chat bubbles: swap sides and align text right in RTL */
+[dir="rtl"] .chat-window,
+.rtl .chat-window {
+  direction: rtl;
+}
+
+[dir="rtl"] .assistant-msg,
+.rtl .assistant-msg {
+  align-self: flex-end;
+  text-align: right;
+}
+
+[dir="rtl"] .user-msg,
+.rtl .user-msg {
+  align-self: flex-start;
+  text-align: right;
+}
+
+/* Ensure other text flows are right-aligned where appropriate */
+[dir="rtl"] .product-card p,
+.rtl .product-card p,
+[dir="rtl"] .product-card h3,
+.rtl .product-card h3 {
+  text-align: right;
+}
+
+/* RTL: align buttons and form controls right-to-left */
+[dir="rtl"] .learnmore-btn,
+.rtl .learnmore-btn {
+  align-self: flex-end;
+}
+
+[dir="rtl"] .clear-btn,
+.rtl .clear-btn {
+  /* ensure clear button aligns visually in RTL header */
+  margin-left: 0;
+  margin-right: 0;
+}
+
+[dir="rtl"] .generate-btn,
+.rtl .generate-btn {
+  text-align: center; /* keep centered but ensure RTL text flows correctly */
+}
+
+/* Swap icon margins in buttons for RTL */
+[dir="rtl"] .generate-btn i,
+.rtl .generate-btn i {
+  margin-right: 0;
+  margin-left: 8px;
+}
+
+[dir="rtl"] .chat-form {
+  flex-direction: row-reverse;
+}
+
+[dir="rtl"] .chat-form input,
+.rtl .chat-form input {
+  text-align: right;
+}
+
+[dir="rtl"] .selected-chip,
+.rtl .selected-chip {
+  flex-direction: row-reverse;
+}
+
+[dir="rtl"] .remove-chip,
+.rtl .remove-chip {
+  /* place remove button on the left in RTL */
+  order: -1;
+}
+
+/* Ensure headings and buttons inside product cards align to the right in RTL
+   Make children take the full width so text-align:right and align-self:flex-end
+   behave predictably across browsers. Use a few !important fallbacks for
+   styles that may be set inline or by other rules. */
+[dir="rtl"] .product-card .product-info,
+.rtl .product-card .product-info {
+  align-items: stretch;
+}
+
+[dir="rtl"] .product-card .product-info h3,
+.rtl .product-card .product-info h3,
+[dir="rtl"] .product-card .product-info p,
+.rtl .product-card .product-info p {
+  width: 100%;
+  text-align: right;
+}
+
+/* No explicit RTL override needed for .learnmore-btn; using logical
+   margin-inline-start ensures the button sits at the inline end in both
+   directions. */
