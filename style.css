@@ -276,8 +276,9 @@ body {
 
 .learnmore-btn {
   margin-top: 8px;
-  /* push the button to the inline end (logical right in LTR, left in RTL) */
-  margin-inline-start: auto;
+  /* default: align to the start (visual left in LTR) */
+  align-self: flex-start;
+  margin-inline-start: 0;
   background: #e3a535;
   border: 0px;
   color: #000;
@@ -585,11 +586,12 @@ body {
 [dir="rtl"] .product-card h3,
 .rtl .product-card h3 {
   text-align: right;
+  
 }
 
-/* RTL: align buttons and form controls right-to-left */
-[dir="rtl"] .learnmore-btn,
-.rtl .learnmore-btn {
+/* RTL: place the Learn more button at the inline end (visual right in RTL) */
+[dir="rtl"] .product-card .learnmore-btn,
+.rtl .product-card .learnmore-btn {
   align-self: flex-end;
 }
 
