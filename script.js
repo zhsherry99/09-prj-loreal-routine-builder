@@ -95,18 +95,43 @@ function appendMessageToChat(role, content) {
 }
 
 async function callOpenAIWithMessages(messages) {
-  // prefer proxy worker
+  // prefer proxy worker (Cloudflare worker). Support several global names.
   const proxyUrl =
     window.CF_WORKER_URL ||
     window.CLOUDFLARE_WORKER_URL ||
+    window.SEARCH_WORKER_URL ||
+    window.SEARCH_PROXY_URL ||
+    window.OPENAI_PROXY_URL ||
     "https://lorealroutinebuilder.sherreo99.workers.dev";
 
   let resp;
   if (proxyUrl) {
-    resp = await fetch(proxyUrl, {
+    // call worker — send the full `messages` array (or wrap a single string)
+    // so the worker can forward to OpenAI. This matches the provided worker
+    // script which expects `userInput.messages`.
+    const endpoint = proxyUrl.replace(/\/$/, "");
+
+    let payloadMessages = [];
+    if (typeof messages === "string") {
+      payloadMessages = [{ role: "user", content: messages }];
+    } else if (Array.isArray(messages)) {
+      payloadMessages = messages;
+    } else if (messages && typeof messages === "object") {
+      // try to convert an object with `content` into a single message
+      payloadMessages = [
+        {
+          role: messages.role || "user",
+          content: messages.content || String(messages),
+        },
+      ];
+    } else {
+      payloadMessages = [{ role: "user", content: String(messages || "") }];
+    }
+
+    resp = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages: payloadMessages }),
     });
   } else {
     const apiKey = window.OPENAI_API_KEY || window.OPENAIKEY || null;
@@ -136,11 +161,40 @@ async function callOpenAIWithMessages(messages) {
   }
 
   const data = await resp.json();
-  const content =
-    data && data.choices && data.choices[0] && data.choices[0].message
-      ? data.choices[0].message.content
-      : JSON.stringify(data, null, 2);
-  return content;
+
+  // If using the proxy worker it may return { reply: string } or a raw
+  // OpenAI chat-completions object (choices[].message)
+  if (data && data.reply) {
+    return { reply: data.reply, web_results: data.web_results || [] };
+  }
+
+  // If worker returned an OpenAI-style chat completions response (choices[].message)
+  if (
+    data &&
+    data.choices &&
+    Array.isArray(data.choices) &&
+    data.choices[0] &&
+    data.choices[0].message
+  ) {
+    const content = data.choices[0].message.content || "";
+    return { reply: content, web_results: data.web_results || [] };
+  }
+
+  // If worker wrapped an `openai` field (older pattern), extract from it
+  if (
+    data &&
+    data.openai &&
+    data.openai.choices &&
+    Array.isArray(data.openai.choices) &&
+    data.openai.choices[0] &&
+    data.openai.choices[0].message
+  ) {
+    const content = data.openai.choices[0].message.content || "";
+    return { reply: content, web_results: data.web_results || [] };
+  }
+
+  // fallback: return raw data as string
+  return { reply: JSON.stringify(data, null, 2), web_results: [] };
 }
 
 /*
@@ -151,17 +205,23 @@ async function callOpenAIWithMessages(messages) {
 */
 async function performWebSearch(query) {
   try {
-    const proxy = window.SEARCH_PROXY_URL || window.SEARCH_WORKER_URL || null;
+    const proxy =
+      window.SEARCH_PROXY_URL ||
+      window.SEARCH_WORKER_URL ||
+      window.CF_WORKER_URL ||
+      window.CLOUDFLARE_WORKER_URL ||
+      null;
     if (!proxy) return [];
 
-    const r = await fetch(proxy, {
+    const endpoint = proxy.replace(/\/$/, "") + "/search";
+    const r = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ q: query }),
     });
     if (!r.ok) return [];
     const j = await r.json();
-    // support multiple shapes
+    // worker returns { results: [...] }
     if (Array.isArray(j)) return j;
     if (Array.isArray(j.results)) return j.results;
     return [];
@@ -588,33 +648,23 @@ chatForm.addEventListener("submit", async (e) => {
   appendMessageToChat("user", text);
   conversationMessages.push({ role: "user", content: text });
 
-  // attempt a web search for the user's question to provide up-to-date context
-  // only if a search proxy is configured
-  const webResults = await performWebSearch(text + " L'Oréal");
-  if (webResults && webResults.length > 0) {
-    // include formatted results as a system-context message so the model can cite them
-    const formatted = webResults
-      .slice(0, 6)
-      .map(
-        (r, i) => `${i + 1}. ${r.title || r.url}\n${r.snippet || ""}\n${r.url}`
-      )
-      .join("\n\n");
-    conversationMessages.push({
-      role: "system",
-      content: `Web search results (top):\n\n${formatted}`,
-    });
-  }
+  // Let the worker perform web search and include citations server-side.
 
   // disable send button while waiting
   if (sendBtn) sendBtn.disabled = true;
 
   try {
-    const reply = await callOpenAIWithMessages(conversationMessages);
+    const result = await callOpenAIWithMessages(conversationMessages);
     // record assistant reply in history and UI
+    const reply = result && result.reply ? result.reply : String(result || "");
     conversationMessages.push({ role: "assistant", content: reply });
     appendMessageToChat("assistant", reply);
-    // show citations if available
-    if (webResults && webResults.length > 0) appendCitationsToChat(webResults);
+    if (
+      result &&
+      Array.isArray(result.web_results) &&
+      result.web_results.length > 0
+    )
+      appendCitationsToChat(result.web_results);
   } catch (err) {
     appendMessageToChat("assistant", `Error: ${err.message}`);
   } finally {
@@ -698,35 +748,23 @@ if (generateBtn) {
 
     try {
       // run a web search for the selected products to provide current context
-      const productNames = productsPayload.map((p) => p.name).join(", ");
-      const webResults = await performWebSearch(
-        `L'Oréal ${productNames} routine, product information, releases, or reviews`
-      );
-
-      if (webResults && webResults.length > 0) {
-        const formatted = webResults
-          .slice(0, 6)
-          .map(
-            (r, i) =>
-              `${i + 1}. ${r.title || r.url}\n${r.snippet || ""}\n${r.url}`
-          )
-          .join("\n\n");
-        conversationMessages.push({
-          role: "system",
-          content: `Web search results (top):\n\n${formatted}`,
-        });
-      }
-
-      const content = await callOpenAIWithMessages(conversationMessages);
+      // Send the user message string to the worker (it will search and call OpenAI)
+      const result = await callOpenAIWithMessages(userMsg.content);
 
       // record assistant reply
+      const content =
+        result && result.reply ? result.reply : String(result || "");
       conversationMessages.push({ role: "assistant", content });
       routineGenerated = true;
 
       // display assistant reply
       appendMessageToChat("assistant", content);
-      if (webResults && webResults.length > 0)
-        appendCitationsToChat(webResults);
+      if (
+        result &&
+        Array.isArray(result.web_results) &&
+        result.web_results.length > 0
+      )
+        appendCitationsToChat(result.web_results);
     } catch (err) {
       appendMessageToChat(
         "assistant",
